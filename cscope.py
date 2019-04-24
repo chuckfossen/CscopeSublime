@@ -165,6 +165,57 @@ class CscopeDatabase(object):
         output, erroroutput = proc.communicate()
         print('CscopeDatabase: Rebuild done.')
 
+clean_name = re.compile('^\s*(public\s+|private\s+|protected\s+|static\s+|function\s+|def\s+)+', re.I)
+
+def get_current_function(self):
+        #print("get_current_function running ")
+
+        for region in self.view.sel():
+            region_row, region_col = self.view.rowcol(region.begin())
+
+            s = ""
+            found = False
+
+            # Look for any classes
+            if True:
+                class_regions = self.view.find_by_selector('entity.name.type.class')
+                for r in reversed(class_regions):
+                    row, col = self.view.rowcol(r.begin())
+                    if row <= region_row:
+                        s += self.view.substr(r)
+                        found = True
+                        break;
+
+            # Look for any functions
+            if True:
+                function_regions = self.view.find_by_selector('meta.function')
+                if function_regions:
+                    for r in reversed(function_regions):
+                        row, col = self.view.rowcol(r.begin())
+                        if row <= region_row:
+                            if True and s:
+                                s += "::"
+                            lines = self.view.substr(r).splitlines()
+                            name = clean_name.sub('', lines[0])
+                            if False:
+                                s += name.strip()
+                            else:
+                                if 'C++' in self.view.settings().get('syntax'):
+                                    if True or len(name.split('(')[0].split('::'))<2:
+                                        s += name.split('(')[0].strip()
+                                    else:
+                                        s += name.split('(')[0].split('::')[1].strip()
+                                else:
+                                    s += name.split('(')[0].split(':')[0].strip()
+                            found = True
+                            break
+
+            if not found:
+                print ("not found")
+            # else:
+            #     print ("function: " + s)
+
+            return s
 
 class CscopeVisiter(sublime_plugin.TextCommand):
     def __init__(self, view):
@@ -299,17 +350,17 @@ class CscopeSublimeSearchWorker(threading.Thread):
         match_string = "{0}".format(match["file"])
         if command_mode in [0, 4, 6, 8]:
             if nested:
-                match_string = ("{0:>6}\n{1:>6} [scope: {2}] {3}").format("..", match["line"], match["scope"], match["instance"])
+                match_string = ("{1:>6} [scope: {2}] {3}").format("..", match["line"], match["scope"], match["instance"])
             else:
                 match_string = ("\n{0}:\n{1:>6} [scope: {2}] {3}").format(match["file"].replace(self.database.root, "."), match["line"], match["scope"], match["instance"])
         elif command_mode == 1:
             if nested:
-                match_string = ("{0:>6}\n{1:>6} {2}").format("..", match["line"], match["instance"])
+                match_string = ("{1:>6} {2}").format("..", match["line"], match["instance"])
             else:
                 match_string = ("\n{0}:\n{1:>6} {2}").format(match["file"].replace(self.database.root, "."), match["line"], match["instance"])
         elif command_mode in [2, 3]:
             if nested:
-                match_string = ("{0:>6}\n{1:>6} [function: {2}] {3}").format("..", match["line"], match["function"], match["instance"])
+                match_string = ("{1:>6} [function: {2}] {3}").format("..", match["line"], match["function"], match["instance"])
             else:
                 match_string = ("\n{0}:\n{1:>6} [function: {2}] {3}").format(match["file"].replace(self.database.root, "."), match["line"], match["function"], match["instance"])
         elif command_mode == 7:
@@ -496,7 +547,7 @@ class CscopeCommand(sublime_plugin.TextCommand):
     def display_results(self, symbol, output):
         cscope_view = self.view.window().new_file()
         cscope_view.set_scratch(True)
-        cscope_view.set_name("Cscope results - " + symbol)
+        cscope_view.set_name("CR:" + symbol)
         CscopeCommand.cscope_output_info['view'] = cscope_view
         CscopeCommand.cscope_output_info['pos'] = 0
         CscopeCommand.cscope_output_info['text'] = output
@@ -540,7 +591,8 @@ class CscopeCommand(sublime_plugin.TextCommand):
         self.view.sel().add(sublime.Region(one, two))
 
         symbol = self.view.substr(self.view.word(first_selection))
-        if get_setting("prompt_before_searching") == True:
+        symbol = symbol.strip()
+        if symbol is "" or get_setting("prompt_before_searching") == True or self.mode == 1:
             sublime.active_window().show_input_panel('Search Cscope for ' + CSCOPE_SEARCH_MODES[self.mode] + ':',
                                                      symbol,
                                                      self.on_search_confirmed,
@@ -550,6 +602,10 @@ class CscopeCommand(sublime_plugin.TextCommand):
             self.on_search_confirmed(symbol)
 
     def on_search_confirmed(self, symbol):
+        symbol = symbol.strip()
+        if symbol is "":
+            symbol = get_current_function(self)
+
         worker = CscopeSublimeSearchWorker(
                 view = self.view,
                 platform = sublime.platform(),
