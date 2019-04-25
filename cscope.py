@@ -5,6 +5,8 @@ import subprocess
 import string
 import threading
 import errno
+import fnmatch
+import time
 
 CSCOPE_PLUGIN_DIR = os.path.basename(os.path.dirname(os.path.realpath(__file__)))
 
@@ -133,7 +135,85 @@ class CscopeDatabase(object):
                 print('CscopeDatabase: Database not found but setting root: {}'
                       .format(self.root))
 
+    def get_file_list(self):
+        final_list = []
+
+        project_data = sublime.active_window().project_data()
+        if project_data:
+            file_exclude_regex = []
+            self.root = project_data["folders"][0]["path"]
+
+            file_exclude_regex = get_setting('file_exclude_regex')
+            print("*file_exclude_regex:" + file_exclude_regex)
+            try:
+                if project_data["settings"]['file_exclude_regex']:
+                    file_exclude_regex.extened(project_data["settings"].get('file_exclude_regex'))
+                    print("file_exclude_regex:" + file_exclude_regex)
+            except:
+                pass
+                # file_exclude_regex = []
+
+            for data in project_data["folders"]:
+                print(data["path"] + ":")
+
+                file_includes = []
+                file_inc_glob = []
+                if file_exclude_regex:
+                    file_ex_re = re.compile(file_exclude_regex)
+                file_excludes = get_setting('file_excludes')
+                folder_excludes = get_setting('folder_excludes')
+
+                if data.get("folder_exclude_patterns"):
+                    for folder in data["folder_exclude_patterns"]:
+                        folder_excludes.append(folder)
+
+                if data.get("file_include_patterns"):
+                    for file in data["file_include_patterns"]:
+                        # check if a glob
+                        if re.search(r'\*', file):
+                            file = re.sub(r'^.*\/', '', file)
+                            file_inc_glob.append(file)
+                        else:
+                            file_includes.append(file)
+
+                print("folder_excludes {}".format(folder_excludes))
+                print("file_inc_glob {}".format(file_inc_glob))
+                print("file_includes {}".format(file_includes))
+
+                for dirname, subdirs, files in os.walk(data["path"], topdown=True):
+                    subdirs[:] = [d for d in subdirs if not d in folder_excludes]
+                    if file_inc_glob:
+                        for fg in file_inc_glob:
+                            for i in range(len(files)-1, -1, -1):
+                                f = files[i]
+                                if not fnmatch.fnmatch(f, fg) and \
+                                        f not in file_includes:
+                                    files.pop(i)
+                    else:
+                        if file_includes:
+                            files[:] = [f for f in files if f in file_includes]
+                    files[:] = [f for f in files if not f in file_excludes]
+                    if file_exclude_regex:
+                        files[:] = [f for f in files if not file_ex_re.match(f)]
+
+                    for name in files:
+                        final_list.append(dirname+"/"+name)
+
+            if final_list is None:
+                print("no files to process")
+                return None
+
+            print("{} files to process".format(len(final_list)))
+            for f in final_list:
+                print(f)
+
+            return final_list
+
     def rebuild(self):
+        use_project_file_list = get_setting('use_project_file_list')
+        if use_project_file_list:
+            file_list = self.get_file_list()
+
         if not (self.root and os.path.isdir(self.root)):
             sublime.error_message('Cscope: No working directory found. '
                                   'Unable to rebuild database.')
@@ -146,6 +226,8 @@ class CscopeDatabase(object):
         if not (cscope_arg_list and isinstance(cscope_arg_list, list)):
             cscope_arg_list = [self.executable, '-Rbq']
 
+        cscope_arg_list.extend(file_list)
+
         print('CscopeDatabase: Rebuilding database in directory: {}, using command: {}'
               .format(self.root, cscope_arg_list))
 
@@ -156,6 +238,8 @@ class CscopeDatabase(object):
             "cwd": self.root
         }
 
+        start = time.time()
+
         try:
             proc = subprocess.Popen(cscope_arg_list, **popen_arg_list)
         except OSError as e:
@@ -163,7 +247,8 @@ class CscopeDatabase(object):
                                   .format(cscope_arg_list, e))
 
         output, erroroutput = proc.communicate()
-        print('CscopeDatabase: Rebuild done.')
+        end = time.time()
+        print('CscopeDatabase: Rebuild done in {:.2f}s'.format(end - start))
 
 clean_name = re.compile('^\s*(public\s+|private\s+|protected\s+|static\s+|function\s+|def\s+)+', re.I)
 
